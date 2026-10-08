@@ -1,0 +1,133 @@
+import CustomerTickets from "../pages/CustomerTickets";
+import { Routes, Route } from "react-router-dom";
+
+// ================= PUBLIC =================
+import Home from "../pages/Home";
+import Login from "../pages/Login";
+import Register from "../pages/Register";
+
+// ================= CUSTOMER =================
+import CustomerDashboard from "../pages/CustomerDashboard";
+
+import CustomerTicketDetails from "../pages/CustomerTicketDetails";
+import ReportProblem from "../pages/ReportProblem";
+import CustomerProfile from "../pages/CustomerProfile";
+
+// ================= AGENT =================
+import AgentDashboard from "../pages/AgentDashboard";
+import AgentTickets from "../pages/AgentTickets";
+import AgentTicketDetails from "../pages/AgentTicketDetails";
+
+// ================= ADMIN =================
+import AdminDashboard from "../pages/AdminDashboard";
+import Customers from "../pages/Customers";
+import CreateCustomer from "../pages/CreateCustomer";
+import Agents from "../pages/Agents";
+import CreateAgent from "../pages/CreateAgent";
+import ProblemReports from "../pages/ProblemReports";
+
+function AppRoutes() {
+  return (
+    <Routes>
+
+      {/* ================= PUBLIC ================= */}
+
+      <Route
+        path="/"
+        element={<Home />}
+      />
+
+      <Route
+        path="/login"
+        element={<Login />}
+      />
+
+      <Route
+        path="/register"
+        element={<Register />}
+      />
+
+
+      {/* ================= CUSTOMER ================= */}
+
+      <Route
+        path="/customer/dashboard"
+        element={<CustomerDashboard />}
+      />
+
+      <Route
+        path="/customer/tickets"
+        element={<CustomerTickets />}
+      />
+
+      <Route
+        path="/customer/tickets/:id"
+        element={<CustomerTicketDetails />}
+      />
+
+      <Route
+        path="/customer/report-problem"
+        element={<ReportProblem />}
+      />
+
+      <Route
+        path="/customer/profile"
+        element={<CustomerProfile />}
+      />
+
+
+      {/* ================= AGENT ================= */}
+
+      <Route
+        path="/agent/dashboard"
+        element={<AgentDashboard />}
+      />
+
+      <Route
+        path="/agent/tickets"
+        element={<AgentTickets />}
+      />
+
+      <Route
+        path="/agent/tickets/:id"
+        element={<AgentTicketDetails />}
+      />
+
+
+      {/* ================= ADMIN ================= */}
+
+      <Route
+        path="/admin/dashboard"
+        element={<AdminDashboard />}
+      />
+
+      <Route
+        path="/admin/customers"
+        element={<Customers />}
+      />
+
+      <Route
+        path="/admin/customers/create"
+        element={<CreateCustomer />}
+      />
+
+      <Route
+        path="/admin/agents"
+        element={<Agents />}
+      />
+
+      <Route
+        path="/admin/agents/create"
+        element={<CreateAgent />}
+      />
+
+      <Route
+        path="/admin/problem-reports"
+        element={<ProblemReports />}
+      />
+
+    </Routes>
+  );
+}
+
+export default AppRoutes;

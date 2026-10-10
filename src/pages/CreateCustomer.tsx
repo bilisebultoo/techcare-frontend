@@ -1,191 +1,108 @@
 import { Link } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
+import "./CreateCustomer.css";
 
 function CreateCustomer() {
   return (
-    <div className="admin-layout">
+    <div className="create-customer-page">
 
       <Sidebar />
 
-      <main className="admin-main">
+      <main className="create-customer-main">
 
-        {/* Header */}
-
-        <header className="admin-header">
-
+        <header className="create-customer-header">
           <div>
+            <span className="create-customer-eyebrow">CUSTOMER MANAGEMENT</span>
             <h1>Add Customer</h1>
-
-            <p>
-              Create a new customer account.
-            </p>
+            <p>Create a new customer account.</p>
           </div>
-
-          <div className="admin-header-right">
-
-            <button className="notification-btn">
-              🔔
-            </button>
-
-            <div className="header-user">
-
-              <div className="admin-avatar">
-                A
-              </div>
-
-              <div>
-                <strong>Administrator</strong>
-                <span>Admin</span>
-              </div>
-
-            </div>
-
-          </div>
-
         </header>
 
-
-        {/* Form */}
-
-        <section className="page-content">
-
-          <div className="form-card">
-
-            <div className="form-card-header">
-
-              <div>
-                <h2>Customer Information</h2>
-
-                <p>
-                  Enter the customer's basic information.
-                </p>
+        <section className="create-customer-content">
+          <div className="create-customer-card">
+            <div className="create-customer-card-header">
+              <div className="create-customer-card-icon" aria-hidden="true">
+                +
               </div>
-
+              <div>
+                <h2>Customer information</h2>
+                <p>Enter the customer's basic contact information.</p>
+              </div>
             </div>
 
-
-            <form className="customer-form">
-
-              <div className="form-row">
-
-                <div className="form-group">
-
-                  <label>
-                    Full Name
-                  </label>
-
+            <form className="create-customer-form">
+              <div className="create-customer-fields">
+                <div className="create-customer-field">
+                  <label htmlFor="customer-name">Full name</label>
                   <input
+                    id="customer-name"
                     type="text"
                     placeholder="Enter full name"
+                    autoComplete="off"
+                    required
                   />
-
                 </div>
 
-
-                <div className="form-group">
-
-                  <label>
-                    Email Address
-                  </label>
-
+                <div className="create-customer-field">
+                  <label htmlFor="customer-email">Email address</label>
                   <input
+                    id="customer-email"
                     type="email"
                     placeholder="Enter email address"
+                    autoComplete="off"
+                    required
                   />
-
                 </div>
-
               </div>
 
-
-              <div className="form-row">
-
-                <div className="form-group">
-
-                  <label>
-                    Phone Number
-                  </label>
-
+              <div className="create-customer-fields">
+                <div className="create-customer-field">
+                  <label htmlFor="customer-phone">Phone number</label>
                   <input
+                    id="customer-phone"
                     type="tel"
                     placeholder="+251 9XX XXX XXX"
+                    autoComplete="off"
+                    required
                   />
-
                 </div>
 
-
-                <div className="form-group">
-
-                  <label>
-                    Account Status
-                  </label>
-
-                  <select defaultValue="ACTIVE">
-
+                <div className="create-customer-field">
+                  <label htmlFor="customer-status">Account status</label>
+                  <select id="customer-status" defaultValue="ACTIVE">
                     <option value="ACTIVE">
                       Active
                     </option>
-
                     <option value="INACTIVE">
                       Inactive
                     </option>
-
                   </select>
-
                 </div>
-
               </div>
 
-
-              <div className="customer-account-info">
-
-                <div className="info-icon">
-                  🔐
-                </div>
-
+              <div className="create-customer-note">
+                <span aria-hidden="true">i</span>
                 <div>
-
-                  <strong>
-                    Customer password
-                  </strong>
-
+                  <strong>Customer password</strong>
                   <p>
-                    The customer will create their own private
-                    password. The administrator will never see
-                    the customer's password.
+                    The customer will create their own private password.
+                    The administrator will never see the customer's password.
                   </p>
-
                 </div>
-
               </div>
 
-
-              <div className="form-actions">
-
-                <Link
-                  to="/admin/customers"
-                  className="cancel-btn"
-                >
+              <div className="create-customer-actions">
+                <Link to="/admin/customers" className="create-customer-cancel">
                   Cancel
                 </Link>
-
-                <button
-                  type="submit"
-                  className="primary-btn"
-                >
+                <button type="submit" className="create-customer-submit">
                   Create Customer
                 </button>
-
               </div>
-
             </form>
-
           </div>
-
         </section>
-
       </main>
-
     </div>
   );
 }

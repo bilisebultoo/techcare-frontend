@@ -1,418 +1,404 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { getAuthToken } from "../utils/auth";
+import { AlertCircle, ArrowLeft, Check, Clock3, FileText, RefreshCw, ShieldCheck } from "lucide-react";
 import Sidebar from "../components/Sidebar";
+import "./ProblemReportReview.css";
 
 type ReportStatus = "PENDING" | "REVIEWED" | "CONVERTED";
+type Customer = {
+  name?: string;
+  email?: string;
+  phone?: string;
+};
+
+type ProblemReport = {
+  _id: string;
+  customerId?: Customer | string | null;
+  customer?: Customer | string | null;
+  deviceType?: string;
+  brand?: string;
+  model?: string;
+  serialNumber?: string;
+  problem?: string;
+  description?: string;
+  status?: ReportStatus;
+  createdAt?: string;
+};
+
+type Agent = {
+  id: string;
+  name: string;
+  email: string;
+  specialization?: string;
+};
+
+const API_URL = "/api";
+
+function getToken() {
+  return getAuthToken();
+}
+
+function getCustomer(report: ProblemReport): Customer {
+  const customer = report.customer ?? report.customerId;
+  return customer && typeof customer === "object" ? customer : {};
+}
+
+function getStatus(status?: string): ReportStatus {
+  if (status === "REVIEWED" || status === "CONVERTED") return status;
+  return "PENDING";
+}
+
+function formatDate(date?: string) {
+  if (!date) return "Date unavailable";
+  const parsed = new Date(date);
+  return Number.isNaN(parsed.getTime())
+    ? "Date unavailable"
+    : parsed.toLocaleDateString(undefined, {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
+}
 
 function ProblemReportReview() {
   const { id } = useParams();
+  const [report, setReport] = useState<ProblemReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(true);
+  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
-  /*
-   * TEMPORARY UI DATA
-   *
-   * Later this will come from:
-   * GET /api/problem-reports/:id
-   *
-   * PostgreSQL → Prisma → Express → React
-   */
-  const report = {
-    id: id || "1",
-    customer: {
-      name: "Abebe Kebede",
-      email: "abebe@example.com",
-      phone: "+251 911 234 567",
-    },
-    device: {
-      type: "Laptop",
-      brand: "Dell",
-      model: "Latitude 5490",
-      serialNumber: "DL5490-2026-001",
-      warranty: "Under Warranty",
-    },
-    problem: {
-      title: "Laptop is not charging",
-      description:
-        "The laptop is not charging when the charger is connected. The customer reported that the battery percentage does not increase even though the charging cable is connected. The charging indicator also sometimes disappears.",
-    },
-    priority: "HIGH",
-    submittedDate: "October 6, 2026",
-    status: "PENDING" as ReportStatus,
-  };
+  useEffect(() => {
+    let active = true;
+    const token = getToken();
+    void Promise.resolve()
+      .then(() => {
+        if (!id) throw new Error("The problem report ID is missing.");
+        return fetch(`${API_URL}/problem-reports/${id}`, {
+          headers: token ? { Authorization: "Bearer " + token } : {},
+        });
+      })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            data.message ||
+              `Unable to load this problem report (HTTP ${response.status}).`
+          );
+        }
+        const item = data.problemReport ?? data.report ?? data;
+        if (!item || typeof item !== "object" || !item._id) {
+          throw new Error("The server returned an invalid problem report.");
+        }
+        return item as ProblemReport;
+      })
+      .then((item) => {
+        if (active) setReport(item);
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Something went wrong while loading the problem report."
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
 
-  const [status, setStatus] = useState<ReportStatus>(
-    report.status
-  );
+    return () => {
+      active = false;
+    };
+  }, [id]);
 
-  const handleStatusChange = (
-    newStatus: ReportStatus
-  ) => {
-    setStatus(newStatus);
+  useEffect(() => {
+    let active = true;
+    const token = getToken();
+    void fetch(`${API_URL}/auth/agents`, {
+      headers: token ? { Authorization: "Bearer " + token } : {},
+    })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.message || `Unable to load agents (HTTP ${response.status}).`);
+        }
+        return data.agents as Agent[];
+      })
+      .then((items) => {
+        if (active) setAgents(items);
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setError(err instanceof Error ? err.message : "Unable to load agents.");
+        }
+      })
+      .finally(() => {
+        if (active) setAgentsLoading(false);
+      });
 
-    // Later:
-    // PUT /api/problem-reports/:id/status
-  };
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function updateStatus(status: ReportStatus) {
+    if (!report || status === getStatus(report.status)) return;
+
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const token = getToken();
+      const response = await fetch(`${API_URL}/problem-reports/${report._id}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: "Bearer " + token } : {}),
+        },
+        body: JSON.stringify({ status }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `Unable to update report status (HTTP ${response.status}).`);
+      }
+      setReport((current) => current ? { ...current, ...(data.problemReport ?? { status }) } : current);
+      setNotice("Report status updated.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong while updating the report.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function assignReport() {
+    if (!report || !selectedAgentId) {
+      setError("Select an active agent before assigning this report.");
+      return;
+    }
+
+    setAssigning(true);
+    setError("");
+    setNotice("");
+    try {
+      const token = getToken();
+      const response = await fetch(`${API_URL}/problem-reports/${report._id}/assign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: "Bearer " + token } : {}),
+        },
+        body: JSON.stringify({ agentId: selectedAgentId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `Unable to assign report (HTTP ${response.status}).`);
+      }
+
+      setReport((current) => current ? { ...current, ...(data.problemReport ?? { status: "CONVERTED" }) } : current);
+      const assignedAgent = agents.find((agent) => agent.id === selectedAgentId);
+      setNotice(`Ticket assigned to ${assignedAgent?.name ?? "the selected agent"}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong while assigning the report.");
+    } finally {
+      setAssigning(false);
+    }
+  }
+
+  const customer = report ? getCustomer(report) : {};
+  const status = report ? getStatus(report.status) : "PENDING";
 
   return (
-    <div className="admin-layout">
+    <div className="admin-layout problem-report-review-page">
       <Sidebar />
-
-      <main className="admin-main">
-
-        {/* HEADER */}
-        <header className="admin-header">
+      <main className="admin-main problem-report-review-main">
+        <header className="pvr-header">
           <div>
+            <span className="pvr-eyebrow">WORKSPACE / PROBLEM REPORTS</span>
             <h1>Review Problem Report</h1>
-            <p>
-              Review the customer's hardware problem before
-              creating an official ticket.
-            </p>
+            <p>Review the customer's hardware issue and report details.</p>
           </div>
-
-          <div className="admin-header-right">
-            <button className="notification-btn">
-              🔔
-            </button>
-
-            <div className="header-user">
-              <div className="admin-avatar">
-                A
-              </div>
-
-              <div>
-                <strong>Administrator</strong>
-                <span>Admin</span>
-              </div>
-            </div>
-          </div>
+          <Link to="/admin/problem-reports" className="pvr-back-link">
+            <ArrowLeft size={16} />
+            All reports
+          </Link>
         </header>
 
-        {/* PAGE */}
-        <section className="page-content">
-
-          {/* BACK */}
-          <Link
-            to="/admin/problem-reports"
-            className="back-link"
-          >
-            ← Back to Problem Reports
-          </Link>
-
-          {/* TITLE */}
-          <div className="review-page-title">
+        {error && (
+          <div className="pvr-alert" role="alert">
+            <AlertCircle size={19} />
             <div>
-              <span className="review-report-label">
-                PROBLEM REPORT
-              </span>
-
-              <h2>
-                Report #{report.id}
-              </h2>
-
-              <p>
-                Submitted on {report.submittedDate}
-              </p>
-            </div>
-
-            <div>
-              <span
-                className={`report-status ${status.toLowerCase()}`}
-              >
-                {status === "PENDING" && "Pending Review"}
-                {status === "REVIEWED" && "Reviewed"}
-                {status === "CONVERTED" && "Converted"}
-              </span>
+              <strong>Unable to complete this action</strong>
+              <p>{error}</p>
             </div>
           </div>
+        )}
 
-          {/* MAIN GRID */}
-          <div className="report-review-grid">
-
-            {/* LEFT SIDE */}
-            <div className="report-review-main">
-
-              {/* CUSTOMER */}
-              <div className="review-card">
-                <div className="review-card-header">
-                  <div>
-                    <h3>Customer Details</h3>
-                    <p>
-                      Information about the customer who
-                      submitted this report.
-                    </p>
-                  </div>
-
-                  <div className="review-section-icon">
-                    👤
-                  </div>
-                </div>
-
-                <div className="customer-detail-grid">
-
-                  <div className="detail-item">
-                    <span>Full Name</span>
-                    <strong>
-                      {report.customer.name}
-                    </strong>
-                  </div>
-
-                  <div className="detail-item">
-                    <span>Email Address</span>
-                    <strong>
-                      {report.customer.email}
-                    </strong>
-                  </div>
-
-                  <div className="detail-item">
-                    <span>Phone Number</span>
-                    <strong>
-                      {report.customer.phone}
-                    </strong>
-                  </div>
-
-                </div>
-              </div>
-
-              {/* DEVICE */}
-              <div className="review-card">
-                <div className="review-card-header">
-                  <div>
-                    <h3>Device Information</h3>
-                    <p>
-                      Hardware information provided by the
-                      customer.
-                    </p>
-                  </div>
-
-                  <div className="review-section-icon">
-                    💻
-                  </div>
-                </div>
-
-                <div className="customer-detail-grid">
-
-                  <div className="detail-item">
-                    <span>Device Type</span>
-                    <strong>
-                      {report.device.type}
-                    </strong>
-                  </div>
-
-                  <div className="detail-item">
-                    <span>Brand</span>
-                    <strong>
-                      {report.device.brand}
-                    </strong>
-                  </div>
-
-                  <div className="detail-item">
-                    <span>Model</span>
-                    <strong>
-                      {report.device.model}
-                    </strong>
-                  </div>
-
-                  <div className="detail-item">
-                    <span>Serial Number</span>
-                    <strong>
-                      {report.device.serialNumber}
-                    </strong>
-                  </div>
-
-                  <div className="detail-item">
-                    <span>Warranty Status</span>
-                    <strong className="warranty-active">
-                      {report.device.warranty}
-                    </strong>
-                  </div>
-
-                </div>
-              </div>
-
-              {/* PROBLEM */}
-              <div className="review-card">
-                <div className="review-card-header">
-                  <div>
-                    <h3>Problem Description</h3>
-                    <p>
-                      Details of the hardware problem reported
-                      by the customer.
-                    </p>
-                  </div>
-
-                  <div className="review-section-icon">
-                    ⚠️
-                  </div>
-                </div>
-
-                <div className="problem-detail-box">
-                  <div className="problem-detail-title">
-                    <span>Problem</span>
-
-                    <span
-                      className={`report-priority ${report.priority.toLowerCase()}`}
-                    >
-                      {report.priority}
-                    </span>
-                  </div>
-
-                  <h4>
-                    {report.problem.title}
-                  </h4>
-
-                  <p>
-                    {report.problem.description}
-                  </p>
-                </div>
-              </div>
-
-            </div>
-
-            {/* RIGHT SIDE */}
-            <aside className="report-review-sidebar">
-
-              {/* STATUS */}
-              <div className="review-card status-card">
-
-                <div className="review-card-header">
-                  <div>
-                    <h3>Report Status</h3>
-                    <p>
-                      Update the review status.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="status-options">
-
-                  <button
-                    className={
-                      status === "PENDING"
-                        ? "status-option active pending-option"
-                        : "status-option"
-                    }
-                    onClick={() =>
-                      handleStatusChange("PENDING")
-                    }
-                  >
-                    <span>⏳</span>
-
-                    <div>
-                      <strong>Pending</strong>
-                      <small>
-                        Waiting for admin review
-                      </small>
-                    </div>
-                  </button>
-
-                  <button
-                    className={
-                      status === "REVIEWED"
-                        ? "status-option active reviewed-option"
-                        : "status-option"
-                    }
-                    onClick={() =>
-                      handleStatusChange("REVIEWED")
-                    }
-                  >
-                    <span>👁️</span>
-
-                    <div>
-                      <strong>Reviewed</strong>
-                      <small>
-                        Report has been reviewed
-                      </small>
-                    </div>
-                  </button>
-
-                  <button
-                    className={
-                      status === "CONVERTED"
-                        ? "status-option active converted-option"
-                        : "status-option"
-                    }
-                    onClick={() =>
-                      handleStatusChange("CONVERTED")
-                    }
-                  >
-                    <span>🎫</span>
-
-                    <div>
-                      <strong>Converted</strong>
-                      <small>
-                        Official ticket created
-                      </small>
-                    </div>
-                  </button>
-
-                </div>
-              </div>
-
-              {/* CREATE TICKET */}
-              <div className="create-ticket-card">
-
-                <div className="ticket-card-icon">
-                  🎫
-                </div>
-
-                <h3>
-                  Create Official Ticket
-                </h3>
-
-                <p>
-                  Convert this customer problem report into
-                  an official support ticket.
-                </p>
-
-                <Link
-                  to={`/admin/problem-reports/${report.id}/create-ticket`}
-                  className="create-ticket-btn"
-                >
-                  Create Ticket
-                </Link>
-
-              </div>
-
-              {/* INFORMATION */}
-              <div className="review-card">
-                <div className="review-card-header">
-                  <div>
-                    <h3>Review Information</h3>
-                  </div>
-                </div>
-
-                <div className="review-info-list">
-
-                  <div>
-                    <span>Report ID</span>
-                    <strong>
-                      #{report.id}
-                    </strong>
-                  </div>
-
-                  <div>
-                    <span>Submitted</span>
-                    <strong>
-                      {report.submittedDate}
-                    </strong>
-                  </div>
-
-                  <div>
-                    <span>Priority</span>
-                    <span
-                      className={`report-priority ${report.priority.toLowerCase()}`}
-                    >
-                      {report.priority}
-                    </span>
-                  </div>
-
-                </div>
-              </div>
-
-            </aside>
-
+        {notice && (
+          <div className="pvr-notice" role="status">
+            <Check size={18} />
+            {notice}
           </div>
+        )}
 
-        </section>
+        {loading ? (
+          <div className="pvr-state">
+            <RefreshCw size={22} className="pvr-spin" />
+            <span>Loading problem report...</span>
+          </div>
+        ) : report ? (
+          <>
+            <section className="pvr-summary">
+              <div className="pvr-summary-icon"><FileText size={22} /></div>
+              <div className="pvr-summary-copy">
+                <span>PROBLEM REPORT</span>
+                <h2>#{report._id.slice(-6).toUpperCase()}</h2>
+                <p>Submitted {formatDate(report.createdAt)}</p>
+              </div>
+              <span className={`pvr-status pvr-status-${status.toLowerCase()}`}>
+                {status === "PENDING" ? "Pending review" : status.toLowerCase()}
+              </span>
+            </section>
+
+            <div className="pvr-grid">
+              <div className="pvr-details">
+                <section className="pvr-card">
+                  <div className="pvr-card-heading">
+                    <div>
+                      <h2>Customer details</h2>
+                      <p>Information about the customer who submitted this report.</p>
+                    </div>
+                  </div>
+                  <div className="pvr-detail-grid">
+                    <div><span>Full name</span><strong>{customer.name || "Not provided"}</strong></div>
+                    <div><span>Email address</span><strong>{customer.email || "Not provided"}</strong></div>
+                    <div><span>Phone number</span><strong>{customer.phone || "Not provided"}</strong></div>
+                  </div>
+                </section>
+
+                <section className="pvr-card">
+                  <div className="pvr-card-heading">
+                    <div>
+                      <h2>Device information</h2>
+                      <p>Hardware information supplied with the report.</p>
+                    </div>
+                  </div>
+                  <div className="pvr-detail-grid">
+                    <div><span>Device type</span><strong>{report.deviceType || "Not provided"}</strong></div>
+                    <div><span>Brand</span><strong>{report.brand || "Not provided"}</strong></div>
+                    <div><span>Model</span><strong>{report.model || "Not provided"}</strong></div>
+                    <div><span>Serial number</span><strong>{report.serialNumber || "Not provided"}</strong></div>
+                  </div>
+                </section>
+
+                <section className="pvr-card">
+                  <div className="pvr-card-heading">
+                    <div>
+                      <h2>Problem description</h2>
+                      <p>Details of the issue reported by the customer.</p>
+                    </div>
+                  </div>
+                  <div className="pvr-problem">
+                    <strong>{report.problem || "Problem not specified"}</strong>
+                    <p>{report.description || "No additional description provided."}</p>
+                  </div>
+                </section>
+              </div>
+
+              <aside className="pvr-actions">
+                <section className="pvr-card">
+                  <div className="pvr-card-heading">
+                    <div>
+                      <h2>Report status</h2>
+                      <p>Save the review status to the report.</p>
+                    </div>
+                  </div>
+                  <div className="pvr-status-actions">
+                    {(["PENDING", "REVIEWED"] as const).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`pvr-status-button ${status === value ? "selected" : ""}`}
+                        onClick={() => void updateStatus(value)}
+                        disabled={saving}
+                      >
+                        <span>{value === "PENDING" ? <Clock3 size={17} /> : <Check size={17} />}</span>
+                        <span>{value === "PENDING" ? "Pending" : "Reviewed"}</span>
+                        {status === value && <Check size={16} />}
+                      </button>
+                    ))}
+                  </div>
+                  {saving && <p className="pvr-saving">Saving status...</p>}
+                </section>
+
+                <section className="pvr-card">
+                  <div className="pvr-card-heading">
+                    <div>
+                      <h2>Assign to an agent</h2>
+                      <p>Convert this report into a support ticket for an active agent.</p>
+                    </div>
+                  </div>
+                  {status === "CONVERTED" ? (
+                    <p className="pvr-assignment-complete">This report has already been converted into a ticket.</p>
+                  ) : (
+                    <>
+                      <label className="pvr-agent-label" htmlFor="pvr-agent">
+                        Support agent
+                      </label>
+                      <select
+                        id="pvr-agent"
+                        className="pvr-agent-select"
+                        value={selectedAgentId}
+                        onChange={(event) => setSelectedAgentId(event.target.value)}
+                        disabled={agentsLoading || assigning}
+                      >
+                        <option value="">
+                          {agentsLoading ? "Loading agents..." : "Choose an agent"}
+                        </option>
+                        {agents.map((agent) => (
+                          <option key={agent.id} value={agent.id}>
+                            {agent.name} ({agent.email})
+                          </option>
+                        ))}
+                      </select>
+                      {!agentsLoading && agents.length === 0 && (
+                        <p className="pvr-saving">No active agents are available.</p>
+                      )}
+                      <button
+                        type="button"
+                        className="pvr-assign-button"
+                        onClick={() => void assignReport()}
+                        disabled={assigning || agentsLoading || agents.length === 0}
+                      >
+                        {assigning ? "Assigning..." : "Assign and create ticket"}
+                      </button>
+                    </>
+                  )}
+                </section>
+
+                <section className="pvr-secure-note">
+                  <ShieldCheck size={20} />
+                  <div>
+                    <strong>Admin review</strong>
+                    <p>Status changes are saved to the problem report.</p>
+                  </div>
+                </section>
+              </aside>
+            </div>
+          </>
+        ) : (
+          <div className="pvr-state pvr-state-error">
+            <AlertCircle size={22} />
+            <span>The problem report could not be found.</span>
+            <Link to="/admin/problem-reports">Return to reports</Link>
+          </div>
+        )}
       </main>
     </div>
   );

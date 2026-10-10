@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { clearAuthToken, getAuthToken } from "../utils/auth";
 
-type TicketStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED";
+type TicketStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
 
 type Ticket = {
   id: string;
@@ -13,80 +14,105 @@ type Ticket = {
   time: string;
 };
 
+type ApiTicket = {
+  _id?: string;
+  title?: string;
+  status?: string;
+  priority?: string;
+  createdAt?: string;
+  deviceType?: string;
+  brand?: string;
+  model?: string;
+  customer?: { name?: string } | null;
+};
+
 function AgentDashboard() {
   const navigate = useNavigate();
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const [activeFilter, setActiveFilter] = useState<
     "ALL" | TicketStatus
   >("ALL");
 
+  useEffect(() => {
+    let active = true;
+    const token = getAuthToken();
+
+    void fetch("/api/tickets/mine", {
+      headers: token ? { Authorization: "Bearer " + token } : {},
+    })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            data.message || `Unable to load tickets (HTTP ${response.status}).`
+          );
+        }
+        if (!Array.isArray(data.tickets)) {
+          throw new Error("The server returned an unexpected ticket format.");
+        }
+        return data.tickets as ApiTicket[];
+      })
+      .then((items) => {
+        if (!active) return;
+        setTickets(
+          items.map((item) => {
+            const date = new Date(item.createdAt ?? "");
+            const device = [item.brand, item.model, item.deviceType]
+              .filter((part): part is string => typeof part === "string" && part.length > 0)
+              .join(" ");
+            return {
+              id: item._id ?? "",
+              customer: item.customer?.name || "Customer",
+              device: device || "Device not specified",
+              problem: item.title || "Problem report",
+              priority: item.priority === "LOW" || item.priority === "HIGH"
+                ? item.priority
+                : "MEDIUM",
+              status: item.status === "IN_PROGRESS"
+                ? "IN_PROGRESS"
+                : item.status === "RESOLVED"
+                  ? "RESOLVED"
+                  : item.status === "CLOSED"
+                    ? "CLOSED"
+                    : "OPEN",
+              time: Number.isNaN(date.getTime())
+                ? "Date unavailable"
+                : date.toLocaleString(),
+            };
+          })
+        );
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setError(
+            err instanceof TypeError
+              ? "Cannot reach the TechCare server. Make sure the backend is running, then try again."
+              : err instanceof Error
+                ? err.message
+                : "Unable to load your assigned tickets."
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    clearAuthToken();
     localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
 
     navigate("/login");
   };
 
-  // Temporary ticket data
-  // Later this will come from the backend.
-  const tickets: Ticket[] = [
-    {
-      id: "TC-001",
-      customer: "Abebe Kebede",
-      device: "Dell Laptop",
-      problem: "Laptop is not charging",
-      priority: "HIGH",
-      status: "OPEN",
-      time: "10 minutes ago",
-    },
-    {
-      id: "TC-002",
-      customer: "Hana Tesfaye",
-      device: "HP Printer",
-      problem: "Printer is not printing",
-      priority: "MEDIUM",
-      status: "IN_PROGRESS",
-      time: "1 hour ago",
-    },
-    {
-      id: "TC-003",
-      customer: "Dawit Alemu",
-      device: "Lenovo Laptop",
-      problem: "Laptop is overheating",
-      priority: "LOW",
-      status: "IN_PROGRESS",
-      time: "3 hours ago",
-    },
-    {
-      id: "TC-004",
-      customer: "Mekdes Girma",
-      device: "Samsung Phone",
-      problem: "Phone is not charging",
-      priority: "HIGH",
-      status: "RESOLVED",
-      time: "Yesterday",
-    },
-    {
-      id: "TC-005",
-      customer: "Samuel Bekele",
-      device: "HP Desktop",
-      problem: "Computer does not start",
-      priority: "HIGH",
-      status: "OPEN",
-      time: "Yesterday",
-    },
-    {
-      id: "TC-006",
-      customer: "Rahel Tadesse",
-      device: "Canon Printer",
-      problem: "Paper keeps getting stuck",
-      priority: "MEDIUM",
-      status: "RESOLVED",
-      time: "2 days ago",
-    },
-  ];
-
-  // Filter tickets
   const filteredTickets =
     activeFilter === "ALL"
       ? tickets
@@ -94,7 +120,6 @@ function AgentDashboard() {
           (ticket) => ticket.status === activeFilter
         );
 
-  // Count tickets
   const totalTickets = tickets.length;
 
   const openTickets = tickets.filter(
@@ -454,7 +479,16 @@ function AgentDashboard() {
 
           <div className="agent-ticket-card">
 
-            {filteredTickets.length === 0 ? (
+            {error ? (
+              <div className="agent-no-tickets" role="alert">
+                <h3>Unable to load tickets</h3>
+                <p>{error}</p>
+              </div>
+            ) : loading ? (
+              <div className="agent-no-tickets" role="status">
+                <h3>Loading tickets...</h3>
+              </div>
+            ) : filteredTickets.length === 0 ? (
 
               <div className="agent-no-tickets">
 
@@ -570,7 +604,9 @@ function AgentDashboard() {
                                 : ticket.status ===
                                   "OPEN"
                                 ? "Open"
-                                : "Resolved"}
+                                : ticket.status === "CLOSED"
+                                  ? "Closed"
+                                  : "Resolved"}
                             </span>
 
                           </td>

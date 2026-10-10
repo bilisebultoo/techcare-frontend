@@ -4923,6 +4923,11 @@ a {
   color: #26a65b;
 }
 
+.agent-status.closed {
+  background: #e5f8ef;
+  color: #16835d;
+}
+
 
 /* Action */
 
@@ -5529,6 +5534,155 @@ a {
 .customer-ticket-details-page {
   min-height: 100vh;
   background: #f7f9fc;
+}
+
+.customer-dashboard-sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
+  width: 245px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 25px 18px;
+  box-sizing: border-box;
+  background: #fff;
+  border-right: 1px solid #e7ebf0;
+}
+
+.customer-sidebar-top {
+  width: 100%;
+}
+
+.customer-dashboard-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px 30px;
+  color: #20252d;
+  text-decoration: none;
+}
+
+.customer-dashboard-logo-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 11px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 5px 15px rgba(22, 119, 255, 0.2);
+}
+
+.customer-dashboard-logo strong,
+.customer-dashboard-logo span {
+  display: block;
+}
+
+.customer-dashboard-logo strong {
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.customer-dashboard-logo span {
+  margin-top: 3px;
+  color: #929aaa;
+  font-size: 10px;
+}
+
+.customer-dashboard-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.customer-dashboard-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  color: #687384;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.customer-dashboard-nav-link span {
+  width: 18px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.customer-dashboard-nav-link:hover,
+.customer-dashboard-nav-link.active {
+  background: #eef5ff;
+  color: #1677ff;
+}
+
+.customer-sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.customer-support-box {
+  padding: 16px;
+  border: 1px solid #e6f0ff;
+  border-radius: 10px;
+  background: #f5f9ff;
+}
+
+.customer-support-box strong {
+  display: block;
+  margin-bottom: 7px;
+  color: #303640;
+  font-size: 11px;
+}
+
+.customer-support-box p {
+  margin: 0 0 10px;
+  color: #8a94a3;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.customer-support-box a {
+  color: #1677ff;
+  font-size: 10px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.customer-support-box a:hover {
+  text-decoration: underline;
+}
+
+.customer-dashboard-logout {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #687384;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.customer-dashboard-logout:hover {
+  background: #fff1f1;
+  color: #e55353;
 }
 
 
@@ -6144,6 +6298,10 @@ a {
 }
 
 @media (max-width: 750px) {
+
+  .customer-dashboard-sidebar {
+    display: none;
+  }
 
   .customer-ticket-details-main {
     width: 100%;

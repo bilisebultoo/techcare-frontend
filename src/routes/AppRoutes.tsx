@@ -17,6 +17,7 @@ import CustomerProfile from "../pages/CustomerProfile";
 import AgentDashboard from "../pages/AgentDashboard";
 import AgentTickets from "../pages/AgentTickets";
 import AgentTicketDetails from "../pages/AgentTicketDetails";
+import AgentProfile from "../pages/AgentProfile";
 
 // ================= ADMIN =================
 import AdminDashboard from "../pages/AdminDashboard";
@@ -24,7 +25,11 @@ import Customers from "../pages/Customers";
 import CreateCustomer from "../pages/CreateCustomer";
 import Agents from "../pages/Agents";
 import CreateAgent from "../pages/CreateAgent";
+import AdminTickets from "../pages/AdminTickets";
 import ProblemReports from "../pages/ProblemReports";
+import ProblemReportReview from "../pages/ProblemReportReview";
+import AdminReports from "../pages/AdminReports";
+import AdminSettings from "../pages/AdminSettings";
 
 function AppRoutes() {
   return (
@@ -93,6 +98,11 @@ function AppRoutes() {
         element={<AgentTicketDetails />}
       />
 
+      <Route
+        path="/agent/profile"
+        element={<AgentProfile />}
+      />
+
 
       {/* ================= ADMIN ================= */}
 
@@ -122,8 +132,28 @@ function AppRoutes() {
       />
 
       <Route
+        path="/admin/tickets"
+        element={<AdminTickets />}
+      />
+
+      <Route
         path="/admin/problem-reports"
         element={<ProblemReports />}
+      />
+
+      <Route
+        path="/admin/problem-reports/:id"
+        element={<ProblemReportReview />}
+      />
+
+      <Route
+        path="/admin/reports"
+        element={<AdminReports />}
+      />
+
+      <Route
+        path="/admin/settings"
+        element={<AdminSettings />}
       />
 
     </Routes>

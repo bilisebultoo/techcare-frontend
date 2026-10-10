@@ -1,105 +1,170 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { clearAuthToken, getAuthToken } from "../utils/auth";
 
 type Message = {
-  id: number;
+  _id: string;
   sender: "CUSTOMER" | "AGENT";
-  name: string;
   message: string;
-  time: string;
+  createdAt: string;
 };
+
+type Ticket = {
+  _id: string;
+  title: string;
+  description: string;
+  status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
+  priority: "LOW" | "MEDIUM" | "HIGH";
+  deviceType?: string;
+  brand?: string;
+  model?: string;
+  createdAt: string;
+  messages: Message[];
+  customerConfirmed: boolean;
+  agent?: {
+    name?: string;
+  } | null;
+};
+
+function getToken() {
+  return getAuthToken();
+}
 
 function CustomerTicketDetails() {
   const navigate = useNavigate();
   const { id } = useParams();
 
+  const [ticket, setTicket] = useState<Ticket | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [confirmingSolved, setConfirmingSolved] = useState(false);
   const [messageText, setMessageText] = useState("");
-  const [customerConfirmed, setCustomerConfirmed] =
-    useState(false);
+  const customerConfirmed = ticket?.customerConfirmed ?? false;
+  const messages = ticket?.messages ?? [];
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 1,
-      sender: "CUSTOMER",
-      name: "You",
-      message:
-        "My laptop is not charging even when I connect the charger.",
-      time: "10:20 AM",
-    },
-    {
-      id: 2,
-      sender: "AGENT",
-      name: "Support Agent",
-      message:
-        "Hello! I will help you with this problem. Please check whether the charging light on your charger is on.",
-      time: "10:25 AM",
-    },
-    {
-      id: 3,
-      sender: "CUSTOMER",
-      name: "You",
-      message:
-        "Yes, the charging light is on.",
-      time: "10:28 AM",
-    },
-    {
-      id: 4,
-      sender: "AGENT",
-      name: "Support Agent",
-      message:
-        "Thank you. Please try connecting the charger to another power outlet and let me know if the laptop starts charging.",
-      time: "10:30 AM",
-    },
-  ]);
+  useEffect(() => {
+    let active = true;
 
-  // Send customer message
-  const handleSendMessage = (
-    e: React.FormEvent<HTMLFormElement>
-  ) => {
+    async function loadTicket() {
+      try {
+        if (!id) throw new Error("Ticket ID is missing.");
+        const token = getToken();
+        const response = await fetch(`/api/tickets/${id}`, {
+          cache: "no-store",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.message || `Unable to load ticket (HTTP ${response.status}).`);
+        }
+        if (!data.ticket || data.ticket._id !== id) {
+          throw new Error("The requested ticket was not returned by the server.");
+        }
+        if (active) {
+          setTicket(data.ticket as Ticket);
+          setError("");
+        }
+      } catch (err) {
+        if (active) {
+          setError(err instanceof Error ? err.message : "Unable to load this ticket.");
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    void loadTicket();
+    const refreshInterval = window.setInterval(() => {
+      void loadTicket();
+    }, 5000);
+
+    return () => {
+      active = false;
+      window.clearInterval(refreshInterval);
+    };
+  }, [id]);
+
+  const handleSendMessage = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!ticket || ticket.status === "CLOSED") return;
 
     const trimmedMessage = messageText.trim();
-
     if (!trimmedMessage) {
       return;
     }
 
-    const newMessage: Message = {
-      id: Date.now(),
-      sender: "CUSTOMER",
-      name: "You",
-      message: trimmedMessage,
-      time: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
+    setSendingMessage(true);
+    setError("");
+    try {
+      const token = getToken();
+      const response = await fetch(`/api/tickets/${ticket._id}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ message: trimmedMessage }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `Unable to send message (HTTP ${response.status}).`);
+      }
+      if (!data.newMessage) {
+        throw new Error("The server did not return the sent message.");
+      }
 
-    setMessages((currentMessages) => [
-      ...currentMessages,
-      newMessage,
-    ]);
-
-    setMessageText("");
+      setTicket((currentTicket) => currentTicket
+        ? { ...currentTicket, messages: [...currentTicket.messages, data.newMessage] }
+        : currentTicket);
+      setMessageText("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to send message to your support agent.");
+    } finally {
+      setSendingMessage(false);
+    }
   };
 
   // Confirm that the problem is solved
-  const handleConfirmSolved = () => {
+  const handleConfirmSolved = async () => {
+    if (!ticket || confirmingSolved || customerConfirmed) return;
+
     const confirmed = window.confirm(
       "Are you sure your hardware problem has been solved?"
     );
-
     if (!confirmed) {
       return;
     }
 
-    setCustomerConfirmed(true);
+    setConfirmingSolved(true);
+    setError("");
+    try {
+      const token = getToken();
+      const response = await fetch(`/api/tickets/${ticket._id}/confirmation`, {
+        method: "POST",
+        cache: "no-store",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `Unable to confirm ticket (HTTP ${response.status}).`);
+      }
+      if (!data.ticket || data.ticket._id !== ticket._id || data.ticket.status !== "CLOSED") {
+        throw new Error("The server did not confirm that the ticket was closed.");
+      }
+      setTicket(data.ticket as Ticket);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to confirm the problem is solved.");
+    } finally {
+      setConfirmingSolved(false);
+    }
   };
 
   // Logout
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    clearAuthToken();
     localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
 
     navigate("/login");
   };
@@ -249,15 +314,15 @@ function CustomerTicketDetails() {
           <div className="customer-ticket-header-left">
 
             <div className="customer-ticket-number">
-              #{id || "TC-001"}
+              #{ticket?._id || id || "Ticket"}
             </div>
 
-            <h2>
-              Laptop is not charging
-            </h2>
+            <h2>{ticket?.title || "Loading ticket..."}</h2>
 
             <p>
-              Created today at 10:20 AM
+              {ticket?.createdAt
+                ? `Created ${new Date(ticket.createdAt).toLocaleString()}`
+                : ""}
             </p>
 
           </div>
@@ -265,11 +330,11 @@ function CustomerTicketDetails() {
           <div className="customer-ticket-header-right">
 
             <span className="customer-ticket-priority high">
-              HIGH
+              {ticket?.priority || "—"}
             </span>
 
-            <span className="customer-ticket-status in-progress">
-              IN PROGRESS
+            <span className={`customer-ticket-status ${ticket?.status?.toLowerCase().replace("_", "-") || "in-progress"}`}>
+              {ticket?.status?.replace("_", " ") || "—"}
             </span>
 
           </div>
@@ -291,8 +356,8 @@ function CustomerTicketDetails() {
 
             <div>
               <span>DEVICE</span>
-              <strong>Dell Laptop</strong>
-              <p>Latitude 5490</p>
+              <strong>{[ticket?.brand, ticket?.model].filter(Boolean).join(" ") || "Not specified"}</strong>
+              <p>{ticket?.deviceType || "Device details"}</p>
             </div>
 
           </div>
@@ -306,7 +371,7 @@ function CustomerTicketDetails() {
 
             <div>
               <span>ASSIGNED AGENT</span>
-              <strong>Support Agent</strong>
+              <strong>{ticket?.agent?.name || "Support Agent"}</strong>
               <p>TechCare Support Team</p>
             </div>
 
@@ -321,8 +386,8 @@ function CustomerTicketDetails() {
 
             <div>
               <span>CATEGORY</span>
-              <strong>Hardware</strong>
-              <p>Charging Problem</p>
+              <strong>{ticket?.deviceType || "Hardware"}</strong>
+              <p>{ticket?.title || "Ticket category"}</p>
             </div>
 
           </div>
@@ -347,14 +412,10 @@ function CustomerTicketDetails() {
 
           <div className="customer-problem-box">
 
-            <strong>
-              Laptop is not charging
-            </strong>
+            <strong>{ticket?.title || "Problem details"}</strong>
 
             <p>
-              My Dell laptop is not charging even
-              when the charger is connected. The
-              battery percentage does not increase.
+              {ticket?.description || "Loading ticket description..."}
             </p>
 
           </div>
@@ -376,11 +437,22 @@ function CustomerTicketDetails() {
             </div>
 
             <div className="conversation-status">
-              ● Live Support
+              {ticket?.status === "CLOSED" ? "● Closed" : "● Live Support"}
             </div>
 
           </div>
 
+          {ticket?.status === "CLOSED" && (
+            <div className="customer-requests-error" role="status">
+              This ticket is closed. The conversation is now read-only.
+            </div>
+          )}
+
+          {error && (
+            <div role="alert" className="customer-requests-error">
+              {error}
+            </div>
+          )}
 
           {/* =========================================
               MESSAGES
@@ -388,10 +460,14 @@ function CustomerTicketDetails() {
 
           <div className="customer-messages">
 
-            {messages.map((message) => (
+            {loading ? (
+              <p role="status">Loading conversation...</p>
+            ) : messages.length === 0 ? (
+              <p>No messages yet. Send a message to start the conversation with your support agent.</p>
+            ) : messages.map((message, index) => (
 
               <div
-                key={message.id}
+                key={message._id || `${message.sender}-${index}`}
                 className={`customer-message-row ${
                   message.sender === "CUSTOMER"
                     ? "customer-message"
@@ -410,11 +486,11 @@ function CustomerTicketDetails() {
                   <div className="customer-message-meta">
 
                     <strong>
-                      {message.name}
+                      {message.sender === "CUSTOMER" ? "You" : ticket?.agent?.name || "Support Agent"}
                     </strong>
 
                     <span>
-                      {message.time}
+                      {new Date(message.createdAt).toLocaleString()}
                     </span>
 
                   </div>
@@ -436,7 +512,7 @@ function CustomerTicketDetails() {
               MESSAGE INPUT
           ========================================= */}
 
-          {!customerConfirmed && (
+          {ticket?.status !== "CLOSED" && !customerConfirmed && (
 
             <form
               className="customer-message-form"
@@ -450,6 +526,7 @@ function CustomerTicketDetails() {
                 }
                 placeholder="Write a message to your support agent..."
                 rows={3}
+                disabled={loading || !ticket || sendingMessage}
               />
 
               <div className="customer-message-actions">
@@ -461,8 +538,9 @@ function CustomerTicketDetails() {
                 <button
                   type="submit"
                   className="customer-send-message-btn"
+                  disabled={loading || !ticket || sendingMessage || !messageText.trim()}
                 >
-                  Send Message →
+                  {sendingMessage ? "Sending..." : "Send Message →"}
                 </button>
 
               </div>
@@ -504,8 +582,9 @@ function CustomerTicketDetails() {
               type="button"
               className="customer-confirm-btn"
               onClick={handleConfirmSolved}
+              disabled={loading || confirmingSolved || !ticket}
             >
-              Yes, Problem Is Solved
+              {confirmingSolved ? "Saving Confirmation..." : "Yes, Problem Is Solved"}
             </button>
 
           </section>
@@ -525,8 +604,7 @@ function CustomerTicketDetails() {
               </h2>
 
               <p>
-                Thank you for confirming. The support
-                agent can now close this ticket.
+                Thank you for confirming. This ticket is now closed.
               </p>
 
             </div>

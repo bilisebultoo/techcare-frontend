@@ -1,8 +1,59 @@
-import { Link } from "react-router-dom";
-import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useState, type FormEvent } from "react";
+import { getAuthToken } from "../utils/auth";
+import "./ReportProblem.css";
 
 function ReportProblem() {
+  const navigate = useNavigate();
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError("");
+    setLoading(true);
+
+    const formData = new FormData(event.currentTarget);
+    const token = getAuthToken();
+
+    try {
+      const response = await fetch(
+        "/api/problem-reports",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({
+            deviceType: formData.get("deviceType"),
+            brand: formData.get("brand"),
+            model: formData.get("model"),
+            serialNumber: formData.get("serialNumber"),
+            problem: formData.get("problem"),
+            description: formData.get("description"),
+          }),
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.message || `Unable to submit report (HTTP ${response.status}).`
+        );
+      }
+
+      navigate("/customer/tickets");
+    } catch (err) {
+      setError(
+        err instanceof TypeError
+          ? "Cannot reach the TechCare server. Make sure both the frontend and backend are running, then try again."
+          : err instanceof Error
+          ? err.message
+          : "Something went wrong while submitting your report."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleFileChange = (
     event: React.ChangeEvent<HTMLInputElement>
@@ -75,7 +126,7 @@ function ReportProblem() {
         {/* FORM CARD */}
         <div className="report-card">
 
-          <form>
+          <form onSubmit={handleSubmit}>
 
             {/* DEVICE INFORMATION */}
             <div className="form-section">
@@ -107,6 +158,7 @@ function ReportProblem() {
                   </label>
 
                   <select
+                    name="deviceType"
                     defaultValue=""
                     required
                   >
@@ -138,6 +190,7 @@ function ReportProblem() {
                   </label>
 
                   <input
+                    name="brand"
                     type="text"
                     placeholder="e.g. Dell, HP, Lenovo"
                   />
@@ -153,6 +206,7 @@ function ReportProblem() {
                   </label>
 
                   <input
+                    name="model"
                     type="text"
                     placeholder="Enter device model"
                   />
@@ -168,6 +222,7 @@ function ReportProblem() {
                   </label>
 
                   <input
+                    name="serialNumber"
                     type="text"
                     placeholder="Enter serial number"
                     required
@@ -208,6 +263,7 @@ function ReportProblem() {
                 </label>
 
                 <input
+                  name="problem"
                   type="text"
                   placeholder="e.g. Laptop is not charging"
                   required
@@ -224,6 +280,7 @@ function ReportProblem() {
                 </label>
 
                 <textarea
+                  name="description"
                   rows={6}
                   placeholder="Please describe the problem in detail. Include what happened, when it started, and anything you have already tried."
                   required
@@ -276,8 +333,8 @@ function ReportProblem() {
 
 
                 <p className="file-help-text">
-                  You can upload photos, screenshots, PDF or
-                  document files.
+                  Attachments are not saved yet. Submit the report details
+                  without relying on selected files.
                 </p>
 
 
@@ -344,6 +401,12 @@ function ReportProblem() {
             {/* SUBMIT */}
             <div className="report-submit-area">
 
+              {error && (
+                <p role="alert" className="report-submit-error">
+                  {error}
+                </p>
+              )}
+
               <p>
                 Our support team will review your report
                 and create a support ticket.
@@ -352,8 +415,9 @@ function ReportProblem() {
               <button
                 type="submit"
                 className="submit-problem-btn"
+                disabled={loading}
               >
-                Submit Problem Report →
+                {loading ? "Submitting..." : "Submit Problem Report →"}
               </button>
 
             </div>

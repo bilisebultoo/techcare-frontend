@@ -1,888 +1,490 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { clearAuthToken, getAuthToken } from "../utils/auth";
 
-type Message = {
-  id: number;
+type TicketStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
+type TicketMessage = {
+  _id?: string;
   sender: "CUSTOMER" | "AGENT";
-  name: string;
   message: string;
-  time: string;
+  createdAt?: string | Date;
 };
+
+type Ticket = {
+  _id: string;
+  title: string;
+  description: string;
+  status: TicketStatus;
+  priority: "LOW" | "MEDIUM" | "HIGH";
+  deviceType?: string;
+  brand?: string;
+  model?: string;
+  customerConfirmed?: boolean;
+  messages?: TicketMessage[];
+  customer?: {
+    name?: string;
+    email?: string;
+    phone?: string;
+  } | null;
+};
+
+function getToken() {
+  return getAuthToken();
+}
 
 function AgentTicketDetails() {
   const navigate = useNavigate();
   const { id } = useParams();
+  const [ticket, setTicket] = useState<Ticket | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [messageText, setMessageText] = useState("");
+  const [error, setError] = useState("");
+  const [statusNotice, setStatusNotice] = useState("");
+  const ticketRequestId = useRef(0);
+  const statusUpdateInProgress = useRef(false);
 
-  const [message, setMessage] = useState("");
-
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 1,
-      sender: "CUSTOMER",
-      name: "Abebe Kebede",
-      message:
-        "My laptop is not charging even when I connect the charger.",
-      time: "10:20 AM",
-    },
-    {
-      id: 2,
-      sender: "AGENT",
-      name: "You",
-      message:
-        "Hello! I will help you with this problem. Please check whether the charging light on your charger is on.",
-      time: "10:25 AM",
-    },
-    {
-      id: 3,
-      sender: "CUSTOMER",
-      name: "Abebe Kebede",
-      message:
-        "Yes, the charging light is on.",
-      time: "10:28 AM",
-    },
-  ]);
-
-  const [status, setStatus] = useState("IN_PROGRESS");
-
-  const handleSend = () => {
-    if (!message.trim()) {
-      return;
+  useEffect(() => {
+    let active = true;
+    async function loadTicket() {
+      if (statusUpdateInProgress.current) return;
+      const requestId = ++ticketRequestId.current;
+      try {
+        if (!id) throw new Error("Ticket ID is missing.");
+        const token = getToken();
+        const response = await fetch(`/api/tickets/${id}`, {
+          cache: "no-store",
+          headers: token ? { Authorization: "Bearer " + token } : {},
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.message || `Unable to load ticket (HTTP ${response.status}).`);
+        }
+        if (!data.ticket || data.ticket._id !== id) {
+          throw new Error("The requested ticket was not returned by the server.");
+        }
+        if (active && requestId === ticketRequestId.current) {
+          setTicket(data.ticket as Ticket);
+          setError("");
+        }
+      } catch (err) {
+        if (active && requestId === ticketRequestId.current) {
+          setError(err instanceof Error ? err.message : "Unable to load this ticket.");
+        }
+      } finally {
+        if (active && requestId === ticketRequestId.current) setLoading(false);
+      }
     }
 
-    const newMessage: Message = {
-      id: Date.now(),
-      sender: "AGENT",
-      name: "You",
-      message: message.trim(),
-      time: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+    void loadTicket();
+    const refreshInterval = window.setInterval(() => {
+      void loadTicket();
+    }, 5000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadTicket();
     };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
-    setMessages((oldMessages) => [
-      ...oldMessages,
-      newMessage,
-    ]);
+    return () => {
+      active = false;
+      window.clearInterval(refreshInterval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [id]);
 
-    setMessage("");
-  };
+  async function updateStatus(status: TicketStatus) {
+    if (
+      !ticket ||
+      status === ticket.status ||
+      statusUpdateInProgress.current ||
+      (status === "CLOSED" && !ticket.customerConfirmed)
+    ) return;
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
+    statusUpdateInProgress.current = true;
+    ticketRequestId.current += 1;
+    setSavingStatus(true);
+    setError("");
+    setStatusNotice("");
+    try {
+      const token = getToken();
+      const response = await fetch(`/api/tickets/${ticket._id}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: "Bearer " + token } : {}),
+        },
+        body: JSON.stringify({ status }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `Unable to update ticket (HTTP ${response.status}).`);
+      }
+      if (!data.ticket || data.ticket._id !== ticket._id || data.ticket.status !== status) {
+        throw new Error("The server did not confirm the requested ticket status.");
+      }
+      setTicket(data.ticket as Ticket);
+      setStatusNotice(status === "CLOSED" ? "Ticket and conversation closed successfully." : "Ticket status updated.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update ticket status.");
+    } finally {
+      statusUpdateInProgress.current = false;
+      setSavingStatus(false);
+    }
+  }
+
+  async function handleSendMessage(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!ticket || ticket.status === "CLOSED") return;
+
+    const trimmedMessage = messageText.trim();
+    if (!trimmedMessage) return;
+
+    setSendingMessage(true);
+    setError("");
+
+    try {
+      const token = getToken();
+      const response = await fetch(`/api/tickets/${ticket._id}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: "Bearer " + token } : {}),
+        },
+        body: JSON.stringify({ message: trimmedMessage, sender: "AGENT" }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `Unable to send the message (HTTP ${response.status}).`);
+      }
+
+      setTicket((currentTicket) => {
+        if (!currentTicket) return currentTicket;
+        const updatedMessages = data.ticket?.messages ?? [
+          ...(currentTicket.messages ?? []),
+          data.newMessage ?? {
+            sender: "AGENT",
+            message: trimmedMessage,
+            createdAt: new Date().toISOString(),
+          },
+        ];
+        return { ...currentTicket, messages: updatedMessages };
+      });
+      setMessageText("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to send message to customer.");
+    } finally {
+      setSendingMessage(false);
+    }
+  }
+
+  function handleLogout() {
+    clearAuthToken();
     localStorage.removeItem("user");
-
+    sessionStorage.removeItem("user");
     navigate("/login");
-  };
+  }
+
+  const device = ticket
+    ? [ticket.brand, ticket.model, ticket.deviceType]
+        .filter((part): part is string => Boolean(part))
+        .join(" ")
+    : "";
+  const customerName = ticket?.customer?.name || "Customer";
+  const statusLabel = ticket?.status === "IN_PROGRESS"
+    ? "In Progress"
+    : ticket?.status === "CLOSED"
+      ? "Closed"
+      : ticket?.status;
+  const messages = ticket?.messages ?? [];
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#f7f9fc",
-        display: "flex",
-      }}
-    >
-
-      {/* SIDEBAR */}
-
-      <aside
-        style={{
-          width: "245px",
-          minHeight: "100vh",
-          background: "#ffffff",
-          borderRight: "1px solid #e5eaf0",
-          padding: "25px 18px",
-          boxSizing: "border-box",
-          position: "fixed",
-          left: 0,
-          top: 0,
-        }}
-      >
-
-        <Link
-          to="/agent/dashboard"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            textDecoration: "none",
-            color: "#20252d",
-            marginBottom: "40px",
-          }}
-        >
-
-          <div
-            style={{
-              width: "40px",
-              height: "40px",
-              background: "#1677ff",
-              color: "white",
-              borderRadius: "10px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 800,
-              fontSize: "12px",
-            }}
-          >
-            TC
-          </div>
-
-          <div>
-            <strong
-              style={{
-                display: "block",
-                fontSize: "17px",
-              }}
-            >
-              TechCare
-            </strong>
-
-            <span
-              style={{
-                display: "block",
-                color: "#929aaa",
-                fontSize: "10px",
-                marginTop: "3px",
-              }}
-            >
-              Agent Portal
-            </span>
-          </div>
-
+    <div style={{ minHeight: "100vh", background: "#f7f9fc", display: "flex" }}>
+      <aside style={{
+        width: 245, minHeight: "100vh", background: "#fff",
+        borderRight: "1px solid #e5eaf0", padding: "25px 18px",
+        boxSizing: "border-box", position: "fixed", left: 0, top: 0,
+      }}>
+        <Link to="/agent/dashboard" style={{
+          display: "flex", alignItems: "center", gap: 10,
+          textDecoration: "none", color: "#20252d", marginBottom: 40,
+        }}>
+          <div style={{
+            width: 40, height: 40, background: "#1677ff", color: "#fff",
+            borderRadius: 10, display: "grid", placeItems: "center", fontWeight: 800,
+          }}>TC</div>
+          <div><strong style={{ display: "block", fontSize: 17 }}>TechCare</strong>
+            <span style={{ color: "#929aaa", fontSize: 10 }}>Agent Portal</span></div>
         </Link>
-
-
-        <nav
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "6px",
-          }}
-        >
-
-          <Link
-            to="/agent/dashboard"
-            style={navStyle}
-          >
-            ▦ &nbsp; Dashboard
-          </Link>
-
-          <Link
-            to="/agent/tickets"
-            style={{
-              ...navStyle,
-              background: "#eaf3ff",
-              color: "#1677ff",
-            }}
-          >
+        <nav style={{ display: "grid", gap: 6 }}>
+          <Link to="/agent/dashboard" style={navStyle}>▦ &nbsp; Dashboard</Link>
+          <Link to="/agent/tickets" style={{ ...navStyle, background: "#eaf3ff", color: "#1677ff" }}>
             ▣ &nbsp; My Tickets
           </Link>
-
-          <Link
-            to="/agent/profile"
-            style={navStyle}
-          >
-            ◯ &nbsp; My Profile
-          </Link>
-
+          <Link to="/agent/profile" style={navStyle}>◯ &nbsp; My Profile</Link>
         </nav>
-
-
-        <button
-          type="button"
-          onClick={handleLogout}
-          style={{
-            position: "absolute",
-            bottom: "25px",
-            left: "18px",
-            right: "18px",
-            padding: "12px",
-            border: "none",
-            background: "#fff1f1",
-            color: "#e55353",
-            borderRadius: "8px",
-            cursor: "pointer",
-            textAlign: "left",
-          }}
-        >
-          ↪ &nbsp; Logout
-        </button>
-
+        <button type="button" onClick={handleLogout} style={{
+          position: "absolute", bottom: 25, left: 18, right: 18, padding: 12,
+          border: 0, background: "#fff1f1", color: "#e55353", borderRadius: 8,
+          cursor: "pointer", textAlign: "left",
+        }}>↪ &nbsp; Logout</button>
       </aside>
 
-
-      {/* MAIN */}
-
-      <main
-        style={{
-          marginLeft: "245px",
-          width: "calc(100% - 245px)",
-          padding: "0 40px 60px",
-          boxSizing: "border-box",
-        }}
-      >
-
-        {/* TOP BAR */}
-
-        <header
-          style={{
-            minHeight: "95px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            borderBottom: "1px solid #e7ebf0",
-          }}
-        >
-
+      <main style={{
+        marginLeft: 245, width: "calc(100% - 245px)",
+        padding: "0 40px 60px", boxSizing: "border-box",
+      }}>
+        <header style={{
+          minHeight: 95, display: "flex", alignItems: "center",
+          justifyContent: "space-between", borderBottom: "1px solid #e7ebf0",
+        }}>
           <div>
-
-            <p
-              style={{
-                margin: "0 0 6px",
-                color: "#1677ff",
-                fontSize: "9px",
-                fontWeight: 700,
-                letterSpacing: "1.2px",
-              }}
-            >
+            <p style={{ margin: "0 0 6px", color: "#1677ff", fontSize: 9, fontWeight: 700 }}>
               TECHCARE AGENT PORTAL
             </p>
-
-            <h1
-              style={{
-                margin: 0,
-                fontSize: "25px",
-                color: "#20252d",
-              }}
-            >
-              Ticket Details
-            </h1>
-
+            <h1 style={{ margin: 0, fontSize: 25, color: "#20252d" }}>Ticket Details</h1>
           </div>
-
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-            }}
-          >
-
-            <div
-              style={{
-                width: "38px",
-                height: "38px",
-                borderRadius: "50%",
-                background: "#eaf3ff",
-                color: "#1677ff",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontWeight: 700,
-              }}
-            >
-              A
-            </div>
-
-            <div>
-              <strong
-                style={{
-                  display: "block",
-                  fontSize: "12px",
-                }}
-              >
-                Support Agent
-              </strong>
-
-              <span
-                style={{
-                  color: "#929aaa",
-                  fontSize: "10px",
-                }}
-              >
-                Agent Account
-              </span>
-            </div>
-
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{
+              width: 38, height: 38, borderRadius: "50%", background: "#eaf3ff",
+              color: "#1677ff", display: "grid", placeItems: "center", fontWeight: 700,
+            }}>A</div>
+            <div><strong style={{ display: "block", fontSize: 12 }}>Support Agent</strong>
+              <span style={{ color: "#929aaa", fontSize: 10 }}>Agent Account</span></div>
           </div>
-
         </header>
 
+        <Link to="/agent/tickets" style={{
+          display: "inline-block", marginTop: 25, marginBottom: 20,
+          color: "#697586", textDecoration: "none", fontSize: 12, fontWeight: 600,
+        }}>← Back to My Tickets</Link>
 
-        {/* BACK */}
+        {error && <div role="alert" style={alertStyle}>{error}</div>}
+        {statusNotice && <div role="status" style={successStyle}>{statusNotice}</div>}
+        {loading ? (
+          <section style={cardStyle}>Loading ticket details...</section>
+        ) : ticket ? (
+          <>
+            <section style={{
+              ...cardStyle, padding: 25, display: "flex",
+              justifyContent: "space-between", gap: 20,
+            }}>
+              <div>
+                <span style={{ color: "#1677ff", fontSize: 11, fontWeight: 800 }}>#{ticket._id}</span>
+                <h2 style={{ margin: "8px 0", color: "#252a32", fontSize: 23 }}>{ticket.title}</h2>
+                <p style={{ margin: 0, color: "#929aaa", fontSize: 11 }}>Customer: {customerName}</p>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={badgeStyle}>{ticket.priority}</span>
+                <span style={badgeStyle}>{statusLabel}</span>
+              </div>
+            </section>
 
-        <Link
-          to="/agent/tickets"
-          style={{
-            display: "inline-block",
-            marginTop: "25px",
-            marginBottom: "20px",
-            color: "#697586",
-            textDecoration: "none",
-            fontSize: "12px",
-            fontWeight: 600,
-          }}
-        >
-          ← Back to My Tickets
-        </Link>
+            <section style={{
+              display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              gap: 15, marginTop: 15,
+            }}>
+              <InfoCard title="DEVICE" value={device || "Not specified"} description={ticket.deviceType || "Device"} />
+              <InfoCard title="CUSTOMER" value={customerName} description={ticket.customer?.email || "Customer account"} />
+              <InfoCard title="CATEGORY" value={ticket.deviceType || "Hardware"} description={ticket.title} />
+            </section>
 
+            <section style={{ ...cardStyle, padding: 25, marginTop: 15 }}>
+              <p style={{ margin: "0 0 7px", color: "#1677ff", fontSize: 8, fontWeight: 800 }}>
+                PROBLEM INFORMATION
+              </p>
+              <h2 style={{ margin: "0 0 18px", fontSize: 17, color: "#303640" }}>Problem Description</h2>
+              <div style={{ padding: 18, background: "#f8fafc", borderRadius: 8 }}>
+                <strong style={{ display: "block", marginBottom: 8, color: "#303640", fontSize: 12 }}>
+                  {ticket.title}
+                </strong>
+                <p style={{ margin: 0, color: "#687384", fontSize: 11, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                  {ticket.description}
+                </p>
+              </div>
+            </section>
 
-        {/* TICKET HEADER */}
-
-        <section
-          style={{
-            background: "white",
-            border: "1px solid #e5eaf0",
-            borderRadius: "12px",
-            padding: "25px",
-            display: "flex",
-            justifyContent: "space-between",
-            gap: "20px",
-          }}
-        >
-
-          <div>
-
-            <span
-              style={{
-                color: "#1677ff",
-                fontSize: "11px",
-                fontWeight: 800,
-              }}
-            >
-              #{id || "TC-001"}
-            </span>
-
-            <h2
-              style={{
-                margin: "8px 0",
-                color: "#252a32",
-                fontSize: "23px",
-              }}
-            >
-              Laptop is not charging
-            </h2>
-
-            <p
-              style={{
-                margin: 0,
-                color: "#929aaa",
-                fontSize: "11px",
-              }}
-            >
-              Customer: Abebe Kebede
-            </p>
-
-          </div>
-
-
-          <div
-            style={{
-              display: "flex",
-              gap: "8px",
-              alignItems: "center",
-            }}
-          >
-
-            <span
-              style={{
-                padding: "7px 11px",
-                background: "#fff0f0",
-                color: "#e55353",
-                borderRadius: "6px",
-                fontSize: "9px",
-                fontWeight: 800,
-              }}
-            >
-              HIGH
-            </span>
-
-            <span
-              style={{
-                padding: "7px 11px",
-                background:
-                  status === "RESOLVED"
-                    ? "#eaf9f0"
-                    : "#eeeaff",
-                color:
-                  status === "RESOLVED"
-                    ? "#269a59"
-                    : "#7257c7",
-                borderRadius: "6px",
-                fontSize: "9px",
-                fontWeight: 800,
-              }}
-            >
-              {status === "IN_PROGRESS"
-                ? "IN PROGRESS"
-                : status}
-            </span>
-
-          </div>
-
-        </section>
-
-
-        {/* INFORMATION */}
-
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns:
-              "repeat(3, 1fr)",
-            gap: "15px",
-            marginTop: "15px",
-          }}
-        >
-
-          <InfoCard
-            title="DEVICE"
-            value="Dell Laptop"
-            description="Latitude 5490"
-          />
-
-          <InfoCard
-            title="CUSTOMER"
-            value="Abebe Kebede"
-            description="Customer Account"
-          />
-
-          <InfoCard
-            title="CATEGORY"
-            value="Hardware"
-            description="Charging Problem"
-          />
-
-        </section>
-
-
-        {/* PROBLEM */}
-
-        <section
-          style={{
-            background: "white",
-            border: "1px solid #e5eaf0",
-            borderRadius: "12px",
-            padding: "25px",
-            marginTop: "15px",
-          }}
-        >
-
-          <p
-            style={{
-              margin: "0 0 7px",
-              color: "#1677ff",
-              fontSize: "8px",
-              fontWeight: 800,
-              letterSpacing: "1px",
-            }}
-          >
-            PROBLEM INFORMATION
-          </p>
-
-          <h2
-            style={{
-              margin: "0 0 18px",
-              fontSize: "17px",
-              color: "#303640",
-            }}
-          >
-            Problem Description
-          </h2>
-
-          <div
-            style={{
-              padding: "18px",
-              background: "#f8fafc",
-              borderRadius: "8px",
-            }}
-          >
-
-            <strong
-              style={{
-                display: "block",
-                marginBottom: "8px",
-                color: "#303640",
-                fontSize: "12px",
-              }}
-            >
-              Laptop is not charging
-            </strong>
-
-            <p
-              style={{
-                margin: 0,
-                color: "#687384",
-                fontSize: "11px",
-                lineHeight: 1.7,
-              }}
-            >
-              My Dell laptop is not charging even
-              when the charger is connected. The
-              battery percentage does not increase.
-            </p>
-
-          </div>
-
-        </section>
-
-
-        {/* STATUS */}
-
-        <section
-          style={{
-            background: "white",
-            border: "1px solid #e5eaf0",
-            borderRadius: "12px",
-            padding: "22px 25px",
-            marginTop: "15px",
-          }}
-        >
-
-          <h2
-            style={{
-              margin: "0 0 15px",
-              fontSize: "16px",
-              color: "#303640",
-            }}
-          >
-            Update Ticket Status
-          </h2>
-
-          <div
-            style={{
-              display: "flex",
-              gap: "8px",
-            }}
-          >
-
-            <button
-              type="button"
-              onClick={() => setStatus("OPEN")}
-              style={statusButton(status === "OPEN")}
-            >
-              Open
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                setStatus("IN_PROGRESS")
-              }
-              style={statusButton(
-                status === "IN_PROGRESS"
-              )}
-            >
-              In Progress
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                setStatus("RESOLVED")
-              }
-              style={statusButton(
-                status === "RESOLVED"
-              )}
-            >
-              Resolved
-            </button>
-
-          </div>
-
-        </section>
-
-
-        {/* CONVERSATION */}
-
-        <section
-          style={{
-            background: "white",
-            border: "1px solid #e5eaf0",
-            borderRadius: "12px",
-            marginTop: "15px",
-            overflow: "hidden",
-          }}
-        >
-
-          <div
-            style={{
-              padding: "22px 25px",
-              borderBottom: "1px solid #edf0f4",
-            }}
-          >
-
-            <p
-              style={{
-                margin: "0 0 6px",
-                color: "#1677ff",
-                fontSize: "8px",
-                fontWeight: 800,
-                letterSpacing: "1px",
-              }}
-            >
-              CUSTOMER COMMUNICATION
-            </p>
-
-            <h2
-              style={{
-                margin: 0,
-                fontSize: "17px",
-                color: "#303640",
-              }}
-            >
-              Conversation
-            </h2>
-
-          </div>
-
-
-          {/* MESSAGES */}
-
-          <div
-            style={{
-              padding: "25px",
-            }}
-          >
-
-            {messages.map((item) => (
-
-              <div
-                key={item.id}
-                style={{
-                  display: "flex",
-                  flexDirection:
-                    item.sender === "AGENT"
-                      ? "row-reverse"
-                      : "row",
-                  gap: "10px",
-                  marginBottom: "20px",
-                }}
-              >
-
-                <div
-                  style={{
-                    width: "35px",
-                    height: "35px",
-                    flexShrink: 0,
-                    borderRadius: "50%",
-                    background:
-                      item.sender === "AGENT"
-                        ? "#1677ff"
-                        : "#eaf3ff",
-                    color:
-                      item.sender === "AGENT"
-                        ? "white"
-                        : "#1677ff",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "10px",
-                    fontWeight: 800,
-                  }}
-                >
-                  {item.sender === "AGENT"
-                    ? "A"
-                    : "C"}
-                </div>
-
-                <div
-                  style={{
-                    maxWidth: "70%",
-                  }}
-                >
-
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "10px",
-                      marginBottom: "5px",
-                    }}
+            <section style={{ ...cardStyle, padding: "22px 25px", marginTop: 15 }}>
+              <h2 style={{ margin: "0 0 15px", fontSize: 16, color: "#303640" }}>Update Ticket Status</h2>
+              <div style={{ display: "flex", gap: 8 }}>
+                {(["OPEN", "IN_PROGRESS", "RESOLVED"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => void updateStatus(value)}
+                    disabled={savingStatus || ticket.status === "CLOSED"}
+                    style={statusButton(ticket.status === value)}
                   >
+                    {value === "IN_PROGRESS" ? "In Progress" : value === "RESOLVED" ? "Resolved" : "Open"}
+                  </button>
+                ))}
+              </div>
+              {savingStatus && <p style={{ color: "#929aaa", fontSize: 11 }}>Saving status...</p>}
+            </section>
 
-                    <strong
-                      style={{
-                        fontSize: "10px",
-                        color: "#303640",
-                      }}
-                    >
-                      {item.name}
-                    </strong>
-
-                    <span
-                      style={{
-                        fontSize: "8px",
-                        color: "#929aaa",
-                      }}
-                    >
-                      {item.time}
-                    </span>
-
-                  </div>
-
-                  <div
-                    style={{
-                      padding: "11px 14px",
-                      borderRadius: "8px",
-                      background:
-                        item.sender === "AGENT"
-                          ? "#eaf3ff"
-                          : "#f5f7fa",
-                      color: "#505966",
-                      fontSize: "10px",
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    {item.message}
-                  </div>
-
-                </div>
-
+            <section style={{ ...cardStyle, marginTop: 15, overflow: "hidden" }}>
+              <div style={{ padding: "22px 25px", borderBottom: "1px solid #edf0f4" }}>
+                <p style={{ margin: "0 0 6px", color: "#1677ff", fontSize: 8, fontWeight: 800 }}>
+                  CUSTOMER COMMUNICATION
+                </p>
+                <h2 style={{ margin: 0, fontSize: 17, color: "#303640" }}>
+                  Conversation{ticket.status === "CLOSED" ? " (Closed)" : ""}
+                </h2>
               </div>
 
-            ))}
+              <div style={{ padding: 25, display: "grid", gap: 16 }}>
+                {messages.length === 0 ? (
+                  <div style={{ color: "#929aaa", fontSize: 11 }}>
+                    No messages have been added to this ticket yet.
+                  </div>
+                ) : (
+                  messages.map((item, index) => {
+                    const isAgent = item.sender === "AGENT";
+                    const sentAt = item.createdAt
+                      ? new Date(item.createdAt).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "Just now";
 
-          </div>
+                    return (
+                      <div
+                        key={item._id || `${item.sender}-${index}`}
+                        style={{
+                          display: "flex",
+                          justifyContent: isAgent ? "flex-end" : "flex-start",
+                          gap: 10,
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: "50%",
+                            display: "grid",
+                            placeItems: "center",
+                            background: isAgent ? "#1677ff" : "#e9eefb",
+                            color: isAgent ? "#fff" : "#566174",
+                            fontSize: 10,
+                            fontWeight: 800,
+                          }}
+                        >
+                          {isAgent ? "A" : "C"}
+                        </div>
+                        <div
+                          style={{
+                            maxWidth: "72%",
+                            background: isAgent ? "#eaf3ff" : "#f6f8fb",
+                            color: "#303640",
+                            borderRadius: 10,
+                            padding: "12px 14px",
+                            border: "1px solid #edf0f4",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 6 }}>
+                            <strong style={{ fontSize: 11 }}>
+                              {isAgent ? "Support Agent" : customerName}
+                            </strong>
+                            <span style={{ fontSize: 9, color: "#929aaa" }}>{sentAt}</span>
+                          </div>
+                          <div style={{ fontSize: 11, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                            {item.message}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
 
+                {ticket.status === "CLOSED" ? (
+                  <div role="status" style={closedConversationStyle}>
+                    This ticket is closed. The conversation is now read-only.
+                  </div>
+                ) : <form onSubmit={handleSendMessage} style={{ display: "grid", gap: 10 }}>
+                  <textarea
+                    value={messageText}
+                    onChange={(event) => setMessageText(event.target.value)}
+                    placeholder="Write a message to the customer..."
+                    rows={3}
+                    style={{
+                      width: "100%",
+                      resize: "vertical",
+                      border: "1px solid #dfe5ec",
+                      borderRadius: 8,
+                      padding: "12px 14px",
+                      fontSize: 11,
+                      color: "#303640",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <button
+                      type="submit"
+                      disabled={sendingMessage || !messageText.trim()}
+                      style={{
+                        padding: "10px 16px",
+                        border: 0,
+                        borderRadius: 8,
+                        background: sendingMessage || !messageText.trim() ? "#c4d9ff" : "#1677ff",
+                        color: "#fff",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        cursor: sendingMessage || !messageText.trim() ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {sendingMessage ? "Sending..." : "Send Message"}
+                    </button>
+                  </div>
+                </form>}
+              </div>
+            </section>
 
-          {/* SEND MESSAGE */}
-
-          <div
-            style={{
-              padding: "20px 25px",
-              borderTop: "1px solid #edf0f4",
-              background: "#fafbfc",
-            }}
-          >
-
-            <textarea
-              value={message}
-              onChange={(e) =>
-                setMessage(e.target.value)
-              }
-              placeholder="Write a message to the customer..."
-              rows={3}
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                resize: "vertical",
-                padding: "12px",
-                border: "1px solid #dfe5ec",
-                borderRadius: "7px",
-                outline: "none",
-                fontFamily: "inherit",
-                fontSize: "10px",
-              }}
-            />
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                marginTop: "10px",
-              }}
-            >
-
+            <section style={{
+              ...cardStyle, marginTop: 15, padding: "22px 25px",
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20,
+            }}>
+              <div>
+                <h2 style={{ margin: "0 0 6px", color: "#303640", fontSize: 14 }}>
+                  Customer Confirmation
+                </h2>
+                <p style={{ margin: 0, color: "#929aaa", fontSize: 10 }}>
+                  {ticket.customerConfirmed
+                    ? ticket.status === "CLOSED"
+                      ? "The customer confirmed the problem is solved. This ticket is closed."
+                      : "The customer confirmed the problem is solved. You can now close this ticket."
+                    : "The customer must confirm the problem is solved before the ticket can be closed."}
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={handleSend}
+                onClick={() => void updateStatus("CLOSED")}
+                disabled={!ticket.customerConfirmed || savingStatus || ticket.status === "CLOSED"}
+                title={ticket.customerConfirmed
+                  ? "Close this ticket."
+                  : "Customer confirmation is required before closing this ticket."}
                 style={{
-                  padding: "10px 17px",
-                  border: "none",
-                  borderRadius: "7px",
-                  background: "#1677ff",
-                  color: "white",
-                  fontSize: "9px",
-                  fontWeight: 700,
-                  cursor: "pointer",
+                  padding: "10px 16px", border: 0, borderRadius: 7,
+                  background: ticket.customerConfirmed && ticket.status !== "CLOSED" ? "#1677ff" : "#e8ebef",
+                  color: ticket.customerConfirmed && ticket.status !== "CLOSED" ? "#fff" : "#7b8491",
+                  fontSize: 9, fontWeight: 700,
+                  cursor: ticket.customerConfirmed && ticket.status !== "CLOSED" && !savingStatus
+                    ? "pointer"
+                    : "not-allowed",
                 }}
               >
-                Send Message →
+                {savingStatus ? "Closing..." : ticket.status === "CLOSED" ? "Ticket Closed" : "Close Ticket"}
               </button>
-
-            </div>
-
-          </div>
-
-        </section>
-
-
-        {/* CLOSE */}
-
-        <section
-          style={{
-            marginTop: "15px",
-            padding: "22px 25px",
-            background: "white",
-            border: "1px solid #e5eaf0",
-            borderRadius: "12px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "20px",
-          }}
-        >
-
-          <div>
-
-            <h2
-              style={{
-                margin: "0 0 6px",
-                color: "#303640",
-                fontSize: "14px",
-              }}
-            >
-              Customer Confirmation
-            </h2>
-
-            <p
-              style={{
-                margin: 0,
-                color: "#929aaa",
-                fontSize: "10px",
-              }}
-            >
-              The customer must confirm the problem
-              is solved before the ticket is closed.
-            </p>
-
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              alert(
-                "Customer confirmation is required before closing this ticket."
-              );
-            }}
-            style={{
-              padding: "10px 16px",
-              border: "none",
-              borderRadius: "7px",
-              background: "#e8ebef",
-              color: "#7b8491",
-              fontSize: "9px",
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            Close Ticket
-          </button>
-
-        </section>
-
+            </section>
+          </>
+        ) : (
+          <section style={cardStyle}>Ticket not found or it is not assigned to your account.</section>
+        )}
       </main>
-
     </div>
   );
 }
-
-
-/* =========================================
-   SMALL COMPONENTS
-========================================= */
 
 function InfoCard({
   title,
@@ -894,80 +496,83 @@ function InfoCard({
   description: string;
 }) {
   return (
-    <div
-      style={{
-        background: "white",
-        border: "1px solid #e5eaf0",
-        borderRadius: "10px",
-        padding: "20px",
-      }}
-    >
-      <span
-        style={{
-          display: "block",
-          marginBottom: "8px",
-          color: "#929aaa",
-          fontSize: "8px",
-          fontWeight: 800,
-          letterSpacing: "0.8px",
-        }}
-      >
+    <div style={{ ...cardStyle, padding: 20 }}>
+      <span style={{ display: "block", marginBottom: 8, color: "#929aaa", fontSize: 8, fontWeight: 800 }}>
         {title}
       </span>
-
-      <strong
-        style={{
-          display: "block",
-          marginBottom: "5px",
-          color: "#303640",
-          fontSize: "12px",
-        }}
-      >
+      <strong style={{ display: "block", marginBottom: 5, color: "#303640", fontSize: 12 }}>
         {value}
       </strong>
-
-      <p
-        style={{
-          margin: 0,
-          color: "#929aaa",
-          fontSize: "9px",
-        }}
-      >
-        {description}
-      </p>
+      <p style={{ margin: 0, color: "#929aaa", fontSize: 9 }}>{description}</p>
     </div>
   );
 }
 
+const cardStyle = {
+  background: "#fff",
+  border: "1px solid #e5eaf0",
+  borderRadius: 12,
+} as const;
 
-function statusButton(active: boolean) {
-  return {
-    padding: "9px 14px",
-    border: active
-      ? "1px solid #1677ff"
-      : "1px solid #dfe5ec",
-    borderRadius: "7px",
-    background: active
-      ? "#1677ff"
-      : "white",
-    color: active
-      ? "white"
-      : "#697586",
-    fontSize: "9px",
-    fontWeight: 700,
-    cursor: "pointer",
-  };
-}
+const alertStyle = {
+  marginBottom: 15,
+  padding: 14,
+  border: "1px solid #ffcaca",
+  borderRadius: 8,
+  background: "#fff1f1",
+  color: "#b42318",
+  fontSize: 12,
+} as const;
 
+const successStyle = {
+  marginBottom: 15,
+  padding: 14,
+  border: "1px solid #b7e4c7",
+  borderRadius: 8,
+  background: "#effaf2",
+  color: "#207548",
+  fontSize: 12,
+} as const;
+
+const closedConversationStyle = {
+  padding: 14,
+  border: "1px solid #dfe5ec",
+  borderRadius: 8,
+  background: "#f7f9fc",
+  color: "#687384",
+  fontSize: 11,
+} as const;
 
 const navStyle = {
   display: "block",
   padding: "12px 14px",
-  borderRadius: "8px",
+  borderRadius: 8,
   textDecoration: "none",
   color: "#687384",
-  fontSize: "11px",
+  fontSize: 11,
   fontWeight: 600,
-};
+} as const;
+
+function statusButton(active: boolean) {
+  return {
+    padding: "9px 14px",
+    border: active ? "1px solid #1677ff" : "1px solid #dfe5ec",
+    borderRadius: 7,
+    background: active ? "#1677ff" : "#fff",
+    color: active ? "#fff" : "#697586",
+    fontSize: 9,
+    fontWeight: 700,
+    cursor: "pointer",
+  } as const;
+}
+
+const badgeStyle = {
+  padding: "7px 11px",
+  background: "#eaf3ff",
+  color: "#1677ff",
+  borderRadius: 6,
+  fontSize: 9,
+  fontWeight: 800,
+} as const;
 
 export default AgentTicketDetails;

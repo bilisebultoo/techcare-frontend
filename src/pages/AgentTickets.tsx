@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { clearAuthToken, getAuthToken } from "../utils/auth";
 
-type TicketStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED";
+type TicketStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
 
 type Ticket = {
   id: string;
@@ -15,6 +16,9 @@ type Ticket = {
 
 function AgentTickets() {
   const navigate = useNavigate();
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const [activeFilter, setActiveFilter] = useState<
     "ALL" | TicketStatus
@@ -22,62 +26,61 @@ function AgentTickets() {
 
   const [search, setSearch] = useState("");
 
-  const tickets: Ticket[] = [
-    {
-      id: "TC-001",
-      customer: "Abebe Kebede",
-      device: "Dell Laptop",
-      problem: "Laptop is not charging",
-      priority: "HIGH",
-      status: "OPEN",
-      created: "Today, 10:20 AM",
-    },
-    {
-      id: "TC-002",
-      customer: "Hana Tesfaye",
-      device: "HP Printer",
-      problem: "Printer is not printing",
-      priority: "MEDIUM",
-      status: "IN_PROGRESS",
-      created: "Today, 9:15 AM",
-    },
-    {
-      id: "TC-003",
-      customer: "Dawit Alemu",
-      device: "Lenovo Laptop",
-      problem: "Laptop is overheating",
-      priority: "LOW",
-      status: "IN_PROGRESS",
-      created: "Today, 7:40 AM",
-    },
-    {
-      id: "TC-004",
-      customer: "Mekdes Girma",
-      device: "Samsung Phone",
-      problem: "Phone is not charging",
-      priority: "HIGH",
-      status: "RESOLVED",
-      created: "Yesterday, 4:30 PM",
-    },
-    {
-      id: "TC-005",
-      customer: "Samuel Bekele",
-      device: "HP Desktop",
-      problem: "Computer does not start",
-      priority: "HIGH",
-      status: "OPEN",
-      created: "Yesterday, 2:10 PM",
-    },
-    {
-      id: "TC-006",
-      customer: "Rahel Tadesse",
-      device: "Canon Printer",
-      problem: "Paper keeps getting stuck",
-      priority: "MEDIUM",
-      status: "RESOLVED",
-      created: "2 days ago",
-    },
-  ];
+  useEffect(() => {
+    let active = true;
+    const token = getAuthToken();
+
+    void fetch("/api/tickets/mine", {
+      headers: token ? { Authorization: "Bearer " + token } : {},
+    })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.message || `Unable to load tickets (HTTP ${response.status}).`);
+        }
+        return data.tickets;
+      })
+      .then((items: Array<Record<string, unknown>>) => {
+        if (!active) return;
+        setTickets(
+          items.map((item) => {
+            const customer = item.customer as { name?: string } | null;
+            const date = new Date(String(item.createdAt ?? ""));
+            const deviceParts = [item.brand, item.model, item.deviceType]
+              .filter((part): part is string => typeof part === "string" && part.length > 0);
+            return {
+              id: String(item._id),
+              customer: customer?.name || "Customer",
+              device: deviceParts.join(" ") || "Device not specified",
+              problem: String(item.title || "Problem report"),
+              priority: item.priority === "LOW" || item.priority === "HIGH" ? item.priority : "MEDIUM",
+              status: item.status === "IN_PROGRESS"
+                ? "IN_PROGRESS"
+                : item.status === "CLOSED"
+                  ? "CLOSED"
+                  : item.status === "RESOLVED"
+                    ? "RESOLVED"
+                    : "OPEN",
+              created: Number.isNaN(date.getTime())
+                ? "Date unavailable"
+                : date.toLocaleString(),
+            };
+          })
+        );
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setError(err instanceof Error ? err.message : "Unable to load your assigned tickets.");
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const filteredTickets = tickets.filter((ticket) => {
     const matchesStatus =
@@ -110,8 +113,9 @@ function AgentTickets() {
   ).length;
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    clearAuthToken();
     localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
     navigate("/login");
   };
 
@@ -401,7 +405,11 @@ function AgentTickets() {
 
         <section className="agent-full-ticket-card">
 
-          {filteredTickets.length === 0 ? (
+          {loading ? (
+            <div className="agent-no-tickets"><p>Loading your assigned tickets...</p></div>
+          ) : error ? (
+            <div className="agent-no-tickets" role="alert"><p>{error}</p></div>
+          ) : filteredTickets.length === 0 ? (
 
             <div className="agent-no-tickets">
 
@@ -409,11 +417,12 @@ function AgentTickets() {
                 ✓
               </div>
 
-              <h3>No tickets found</h3>
+              <h3>{tickets.length === 0 ? "No tickets assigned yet" : "No tickets found"}</h3>
 
               <p>
-                Try changing the filter or search
-                for another ticket.
+                {tickets.length === 0
+                  ? "Tickets assigned to you by an administrator will appear here."
+                  : "Try changing the filter or search for another ticket."}
               </p>
 
             </div>
@@ -499,8 +508,10 @@ function AgentTickets() {
                           {ticket.status === "IN_PROGRESS"
                             ? "In Progress"
                             : ticket.status === "OPEN"
-                            ? "Open"
-                            : "Resolved"}
+                              ? "Open"
+                              : ticket.status === "CLOSED"
+                                ? "Closed"
+                                : "Resolved"}
                         </span>
 
                       </td>
